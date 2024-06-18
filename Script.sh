@@ -1,18 +1,30 @@
 #!/bin/bash
 
-# Retrieve a list of unused EBS volumes with Volume ID
-unused_volumes=$(aws ec2 describe-volumes --filters Name=status,Values=available --query 'Volumes[*].VolumeId' --output text)
+region="us-west-2"
+output_file="unused_lambda_log_groups.csv"
 
-# Iterate through each volume and retrieve Name and Size details
-echo "Unused EBS volumes:"
-for volume_id in $unused_volumes; do
-  volume_name=$(aws ec2 describe-volumes --volume-ids "$volume_id" --query 'Volumes[*].Tags[?Key==`Name`].Value' --output text)
-  volume_size=$(aws ec2 describe-volumes --volume-ids "$volume_id" --query 'Volumes[*].Size' --output text)
-# Replace empty volume names with "null"
-  if [ -z "$volume_name" ]; then
-    volume_name="null"
+# Get all log groups
+log_groups=$(aws logs describe-log-groups --query 'logGroups[*].logGroupName' --region $region  --output json | tr -d '[],\"' | tr '\\n' ' ')
+
+# Get all Lambda functions
+lambda_functions=$(aws lambda list-functions --query 'Functions[*].FunctionName' --region $region --output json | tr -d '[],\"' | tr '\\n' ' ')
+
+echo "Checking for unused Lambda log groups..."
+
+# Prepare CSV file
+echo "Log Group Name" > "$output_file"
+
+# Loop through each log group and check if it's associated with a non-existent Lambda function
+for log_group in $log_groups; do
+  if [[ $log_group == "/aws/lambda/"* ]]; then
+    lambda_name=${log_group#/aws/lambda/}
+
+    if ! echo "$lambda_functions" | grep -q "\\b$lambda_name\\b"; then
+      echo "Unused log group found: $log_group"
+      echo "$log_group" >> "$output_file"
+    fi
   fi
-  echo "Volume Name: $volume_name, Volume ID: $volume_id, Size: $volume_size GB"
-  echo "------------------------------------------------------------------------"
 done
+
+echo "Check complete. Results are saved in $output_file."
 
